@@ -5,46 +5,69 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Programma per generare due vettori x e y e salvarli su file
 int main(int argc, char *argv[]) {
+    int N;
+    char prefix[128];
 
-    if (argc < 3) {
-        printf("Uso corretto: %s <N> <prefix_output>\n", argv[0]);
-        return 1;
+    // Caso 1: argomenti da linea di comando
+    if (argc >= 3) {
+        N = atoi(argv[1]);
+        snprintf(prefix, sizeof(prefix), "%s", argv[2]);
+    } 
+    // Caso 2: input interattivo
+    else {
+        printf("Enter N (vector size): ");
+        if (scanf("%d", &N) != 1) {
+            printf("Error: invalid N.\n");
+            return 1;
+        }
+
+        printf("Enter output prefix (e.g., ./vector_): ");
+        if (scanf("%127s", prefix) != 1) {
+            printf("Error: invalid prefix.\n");
+            return 1;
+        }
     }
 
-    int N = atoi(argv[1]);        // Dimensione dei vettori
-    char *prefix = argv[2];       // Prefisso per i nomi dei file
+    if (N <= 0) {
+        printf("Error: N must be > 0.\n");
+        return 1;
+    }
 
     double *x = malloc(N * sizeof(double));
     double *y = malloc(N * sizeof(double));
 
     if (x == NULL || y == NULL) {
-        perror("Errore allocazione memoria");
+        perror("Error allocating memory");
+        free(x);
+        free(y);
         return 1;
     }
 
-    // Riempimento dei vettori
+    // Fill vectors
     for (int i = 0; i < N; i++) {
         x[i] = 0.1;
         y[i] = 7.1;
     }
 
-    // Creazione dei nomi dei file di output
-    char filename_x[128], filename_y[128];
+    // Output file names
+    char filename_x[256], filename_y[256];
     snprintf(filename_x, sizeof(filename_x), "%sN%d_x.dat", prefix, N);
     snprintf(filename_y, sizeof(filename_y), "%sN%d_y.dat", prefix, N);
 
-    // Apertura dei file
     FILE *fx = fopen(filename_x, "w");
     FILE *fy = fopen(filename_y, "w");
 
     if (fx == NULL || fy == NULL) {
-        perror("Errore apertura file");
+        perror("Error opening output files");
+        if (fx) fclose(fx);
+        if (fy) fclose(fy);
+        free(x);
+        free(y);
         return 1;
     }
 
-    // Scrittura nei file
+    // Write files
     for (int i = 0; i < N; i++) {
         fprintf(fx, "%.2f\n", x[i]);
         fprintf(fy, "%.2f\n", y[i]);
@@ -55,27 +78,34 @@ int main(int argc, char *argv[]) {
     free(x);
     free(y);
 
-    printf("File generati:\n  %s\n  %s\n", filename_x, filename_y);
+    printf("Files generated:\n  %s\n  %s\n", filename_x, filename_y);
     return 0;
 }
+
 ```
 ### 1.1 Compilation and Execution
 
 **To compile (on terminal)**:
 
+```
+
 gcc generate_vectors.c -o generate_vectors
 
+```
 
-**To run the program**
+**To run the program, then choose N and select output name**
+```
+./generate_vectors 
 
-./generate_vectors 10 ./vector_
+```
 
+**After execution, the following files will be generated (eg "vector" name and 10 for N is chosen):**
 
-**After execution, the following files will be generated:**
+```
+vectorN10_x.dat
+vectorN10_y.dat
 
-./vector_N10_x.dat
-./vector_N10_y.dat
-
+```
 
 
 ## 2 `compute_ax_plus_y.c`
@@ -84,116 +114,224 @@ gcc generate_vectors.c -o generate_vectors
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
-// Funzione per estrarre il valore dopo '='
-void leggi_valore(char *riga, char *valore) {
-    char *uguale = strchr(riga, '=');
-    if (uguale != NULL) {
-        strcpy(valore, uguale + 1);
-        valore[strcspn(valore, "\r\n")] = '\0';
-        while (*valore == ' ') valore++; // Rimuove spazi iniziali
+static void trim_in_place(char *s) {
+    // trim left
+    char *p = s;
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (p != s) memmove(s, p, strlen(p) + 1);
+
+    // trim right
+    size_t len = strlen(s);
+    while (len > 0 && isspace((unsigned char)s[len - 1])) {
+        s[len - 1] = '\0';
+        len--;
     }
 }
 
-int main() {
-    char file_x[128], file_y[128], prefix_output[128];
-    int N = 0;
-    double a = 0.0;  // inizializzata per evitare warning
+static int file_exists(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
 
-    FILE *fconf = fopen("config.txt", "r");
-    if (fconf == NULL) {
-        printf("Errore: impossibile aprire config.txt\n");
+static int read_kv(FILE *f, const char *key, char *out, size_t out_sz) {
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        trim_in_place(line);
+        if (line[0] == '\0' || line[0] == '#') continue;
+
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+
+        *eq = '\0';
+        char left[256];
+        snprintf(left, sizeof(left), "%s", line);
+        trim_in_place(left);
+
+        char right[256];
+        snprintf(right, sizeof(right), "%s", eq + 1);
+        trim_in_place(right);
+
+        if (strcmp(left, key) == 0) {
+            snprintf(out, out_sz, "%s", right);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int write_config(const char *path,
+                        const char *file_x,
+                        const char *file_y,
+                        int N,
+                        double a,
+                        const char *prefix_output) {
+    FILE *fc = fopen(path, "w");
+    if (!fc) return 0;
+
+    fprintf(fc, "file_x=%s\n", file_x);
+    fprintf(fc, "file_y=%s\n", file_y);
+    fprintf(fc, "N=%d\n", N);
+    fprintf(fc, "a=%.17g\n", a);
+    fprintf(fc, "prefix_output=%s\n", prefix_output);
+
+    fclose(fc);
+    return 1;
+}
+
+int main(void) {
+    char file_x[256] = "";
+    char file_y[256] = "";
+    char prefix_output[256] = "vector_";
+    int N = 0;
+    double a = 0.0;
+
+    const char *config_name = "config.txt";
+
+    // 1) If config.txt does not exist, ask user and create it
+    if (!file_exists(config_name)) {
+        printf("config.txt not found. Let's create it.\n");
+
+        printf("Enter filename for x (e.g., vector_N10_x.dat): ");
+        if (scanf("%255s", file_x) != 1) return 1;
+
+        printf("Enter filename for y (e.g., vector_N10_y.dat): ");
+        if (scanf("%255s", file_y) != 1) return 1;
+
+        printf("Enter N (vector size): ");
+        if (scanf("%d", &N) != 1) return 1;
+
+        printf("Enter a (scalar): ");
+        if (scanf("%lf", &a) != 1) return 1;
+
+        printf("Enter output prefix (e.g., vector_): ");
+        if (scanf("%255s", prefix_output) != 1) return 1;
+
+        if (N <= 0) {
+            printf("Error: N must be > 0\n");
+            return 1;
+        }
+
+        if (!write_config(config_name, file_x, file_y, N, a, prefix_output)) {
+            printf("Error: cannot write %s\n", config_name);
+            return 1;
+        }
+
+        printf("Created %s\n\n", config_name);
+    }
+
+    // 2) Read config.txt
+    FILE *fconf = fopen(config_name, "r");
+    if (!fconf) {
+        printf("Error: cannot open %s\n", config_name);
         return 1;
     }
 
-    char riga[256], valore[128];
+    // We read each key by rewinding file each time (simple & clear).
+    char tmp[256];
 
-    // Parsing del file di configurazione
-    while (fgets(riga, sizeof(riga), fconf)) {
-        if (strstr(riga, "file_x")) {
-            leggi_valore(riga, file_x);
-        } else if (strstr(riga, "file_y")) {
-            leggi_valore(riga, file_y);
-        } else if (strstr(riga, "N")) {
-            leggi_valore(riga, valore);
-            N = atoi(valore);
-        } else if (strstr(riga, "a")) {
-            leggi_valore(riga, valore);
-            a = atof(valore);
-        } else if (strstr(riga, "prefix_output")) {
-            leggi_valore(riga, prefix_output);
-        }
-    }
+    rewind(fconf);
+    if (!read_kv(fconf, "file_x", tmp, sizeof(tmp))) { printf("Missing file_x\n"); fclose(fconf); return 1; }
+    snprintf(file_x, sizeof(file_x), "%s", tmp);
+
+    rewind(fconf);
+    if (!read_kv(fconf, "file_y", tmp, sizeof(tmp))) { printf("Missing file_y\n"); fclose(fconf); return 1; }
+    snprintf(file_y, sizeof(file_y), "%s", tmp);
+
+    rewind(fconf);
+    if (!read_kv(fconf, "N", tmp, sizeof(tmp))) { printf("Missing N\n"); fclose(fconf); return 1; }
+    N = atoi(tmp);
+
+    rewind(fconf);
+    if (!read_kv(fconf, "a", tmp, sizeof(tmp))) { printf("Missing a\n"); fclose(fconf); return 1; }
+    a = atof(tmp);
+
+    rewind(fconf);
+    if (!read_kv(fconf, "prefix_output", tmp, sizeof(tmp))) { printf("Missing prefix_output\n"); fclose(fconf); return 1; }
+    snprintf(prefix_output, sizeof(prefix_output), "%s", tmp);
 
     fclose(fconf);
 
-    // Controlli basilari sui parametri letti
     if (N <= 0) {
-        printf("Errore: N non valido (%d)\n", N);
+        printf("Error: invalid N (%d)\n", N);
         return 1;
     }
 
-    printf("File x: %s\n", file_x);
-    printf("File y: %s\n", file_y);
-    printf("N: %d\n", N);
-    printf("a: %.2f\n", a);
-    printf("Output prefix: %s\n", prefix_output);
+    printf("Using config:\n");
+    printf("  file_x=%s\n", file_x);
+    printf("  file_y=%s\n", file_y);
+    printf("  N=%d\n", N);
+    printf("  a=%.6f\n", a);
+    printf("  prefix_output=%s\n\n", prefix_output);
 
-    // Alloca i vettori
-    double *x = malloc(N * sizeof(double));
-    double *y = malloc(N * sizeof(double));
-    double *d = malloc(N * sizeof(double));
-
-    if (x == NULL || y == NULL || d == NULL) {
-        printf("Errore allocazione memoria.\n");
+    // 3) Allocate arrays
+    double *x = malloc((size_t)N * sizeof(double));
+    double *y = malloc((size_t)N * sizeof(double));
+    double *d = malloc((size_t)N * sizeof(double));
+    if (!x || !y || !d) {
+        printf("Error: memory allocation failed\n");
+        free(x); free(y); free(d);
         return 1;
     }
 
-    // Apre i file di input
+    // 4) Read input files
     FILE *fx = fopen(file_x, "r");
     FILE *fy = fopen(file_y, "r");
-
-    if (fx == NULL || fy == NULL) {
-        printf("Errore apertura file x o y.\n");
+    if (!fx || !fy) {
+        printf("Error: cannot open input files\n");
+        if (fx) fclose(fx);
+        if (fy) fclose(fy);
+        free(x); free(y); free(d);
         return 1;
     }
 
-    // Legge i dati
     for (int i = 0; i < N; i++) {
-        fscanf(fx, "%lf", &x[i]);
-        fscanf(fy, "%lf", &y[i]);
+        if (fscanf(fx, "%lf", &x[i]) != 1) {
+            printf("Error reading x at i=%d\n", i);
+            fclose(fx); fclose(fy);
+            free(x); free(y); free(d);
+            return 1;
+        }
+        if (fscanf(fy, "%lf", &y[i]) != 1) {
+            printf("Error reading y at i=%d\n", i);
+            fclose(fx); fclose(fy);
+            free(x); free(y); free(d);
+            return 1;
+        }
     }
 
     fclose(fx);
     fclose(fy);
 
-    // Calcolo del vettore d = a*x + y
+    // 5) Compute d = a*x + y
     for (int i = 0; i < N; i++) {
         d[i] = a * x[i] + y[i];
     }
 
-    // Costruzione del nome del file di output
-    char filename_d[256];  // buffer più grande
+    // 6) Write output
+    char filename_d[512];
     snprintf(filename_d, sizeof(filename_d), "%sN%d_d.dat", prefix_output, N);
 
-    // Salvataggio del risultato
     FILE *fd = fopen(filename_d, "w");
-    if (fd == NULL) {
-        printf("Errore apertura file di output.\n");
+    if (!fd) {
+        printf("Error: cannot open output file\n");
+        free(x); free(y); free(d);
         return 1;
     }
 
     for (int i = 0; i < N; i++) {
         fprintf(fd, "%.2f\n", d[i]);
     }
-
     fclose(fd);
 
     free(x);
     free(y);
     free(d);
 
-    printf("Operazione completata. Risultato salvato in %s\n", filename_d);
+    printf("Done. Result saved in %s\n", filename_d);
     return 0;
 }
 
@@ -202,30 +340,37 @@ int main() {
 
 **To compile (on terminal)**:
 
+```
 gcc compute_ax_plus_y.c -o compute_ax_plus_y
-
+```
 
 **To run the program**
-
+```
 ./compute_ax_plus_y
+```
 
-**Outcome from the terminal:**
+**Then, to create the config.txt and run correctly the script, write the command as follow (note that I used the previous vector files, you can choose other vector set with different N and name)**
+```
+config.txt not found. Let's create it.
+Enter filename for x (e.g., vector_N10_x.dat): vectorN10_x.dat
+Enter filename for y (e.g., vector_N10_y.dat): vectorN10_y.dat
+Enter N (vector size): 10
+Enter a (scalar): 3.00
+Enter output prefix (e.g., vector_): daxpy
+Created config.txt
 
-File x: vector_N10_x.dat
+Using config:
+  file_x=vectorN10_x.dat
+  file_y=vectorN10_y.dat
+  N=10
+  a=3.000000
+  prefix_output=daxpy
 
-File y: vector_N10_y.dat
+Done. Result saved in daxpyN10_d.dat
 
-N: 10
+```
 
-a: 3.00
-
-Output prefix: vector_
-
-Operazione completata. Risultato salvato in vector_N10_d.dat
-
-**Outcome from the file vector_N10_d.dat**
-
-7.40, 7.40, 7.40, 7.40, 7.40, 7.40, 7.40, 7.40, 7.40, 7.40 
+**If you want to do other calculations, be sure to delete the last config.txt before run again compute_ax_plus_y.c**
 
 ## 3 Makefile
 
@@ -249,6 +394,11 @@ compute_ax_plus_y: compute_ax_plus_y.c
 # Clean all generated files
 clean:
 	rm -f generate_vectors compute_ax_plus_y *.o vector_*.dat
+```
+**To compile all the scripts, on terminal**
+
+```c
+make
 ```
 
 ## 4 Code for HDF5 files:
@@ -290,42 +440,52 @@ clean:
 ```c
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "hdf5.h"
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        printf("Usage: %s <N> <output_hdf5_file>\n", argv[0]);
-        return 1;
-    }
 
-    int N = atoi(argv[1]);
-    const char *filename = argv[2];
+    int N = 0;
+    char filename[256];
+
+    // --- Mode selection: CLI or interactive ---
+    if (argc >= 3) {
+        // CLI mode: ./generate_vectors_hdf5 N output.h5
+        N = atoi(argv[1]);
+        snprintf(filename, sizeof(filename), "%s", argv[2]);
+    } else {
+        // Interactive mode: ./generate_vectors_hdf5
+        printf("Enter N (vector size): ");
+        if (scanf("%d", &N) != 1) {
+            printf("Error: invalid input for N.\n");
+            return 1;
+        }
+        snprintf(filename, sizeof(filename), "vectors_N%d.h5", N);
+    }
 
     if (N <= 0) {
         printf("Error: N must be > 0\n");
         return 1;
     }
 
-    // Alloca i vettori in memoria
-    double *x = malloc(N * sizeof(double));
-    double *y = malloc(N * sizeof(double));
-
+    // Allocate vectors
+    double *x = malloc((size_t)N * sizeof(double));
+    double *y = malloc((size_t)N * sizeof(double));
     if (x == NULL || y == NULL) {
         perror("Error allocating memory");
+        free(x);
+        free(y);
         return 1;
     }
 
-    // Riempie i vettori
+    // Fill vectors
     for (int i = 0; i < N; i++) {
         x[i] = 0.1;
         y[i] = 7.1;
     }
 
-    // --- Scrittura in HDF5 ---
-
-    // Crea il file HDF5 (sovrascrive se esiste)
-    hid_t file_id = H5Fcreate(filename, H5F_ACC_TRUNC,
-                              H5P_DEFAULT, H5P_DEFAULT);
+    // --- HDF5 writing ---
+    hid_t file_id = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     if (file_id < 0) {
         printf("Error creating HDF5 file %s\n", filename);
         free(x);
@@ -333,10 +493,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Spazio dati 1D di dimensione N
-    hsize_t dims[1] = { (hsize_t) N };
+    hsize_t dims[1] = { (hsize_t)N };
     hid_t dataspace_id = H5Screate_simple(1, dims, NULL);
-
     if (dataspace_id < 0) {
         printf("Error creating dataspace\n");
         H5Fclose(file_id);
@@ -345,23 +503,19 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Crea dataset "x"
-    hid_t dset_x_id = H5Dcreate(file_id, "/x",
-                                H5T_NATIVE_DOUBLE, dataspace_id,
-                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    // Dataset /x
+    hid_t dset_x_id = H5Dcreate(file_id, "/x", H5T_NATIVE_DOUBLE,
+                                dataspace_id, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     if (dset_x_id < 0) {
-        printf("Error creating dataset x\n");
+        printf("Error creating dataset /x\n");
         H5Sclose(dataspace_id);
         H5Fclose(file_id);
         free(x);
         free(y);
         return 1;
     }
-
-    // Scrive il vettore x nel dataset "x"
-    if (H5Dwrite(dset_x_id, H5T_NATIVE_DOUBLE,
-                 H5S_ALL, H5S_ALL, H5P_DEFAULT, x) < 0) {
-        printf("Error writing dataset x\n");
+    if (H5Dwrite(dset_x_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, x) < 0) {
+        printf("Error writing dataset /x\n");
         H5Dclose(dset_x_id);
         H5Sclose(dataspace_id);
         H5Fclose(file_id);
@@ -369,26 +523,21 @@ int main(int argc, char *argv[]) {
         free(y);
         return 1;
     }
-
     H5Dclose(dset_x_id);
 
-    // Crea dataset "y"
-    hid_t dset_y_id = H5Dcreate(file_id, "/y",
-                                H5T_NATIVE_DOUBLE, dataspace_id,
-                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    // Dataset /y
+    hid_t dset_y_id = H5Dcreate(file_id, "/y", H5T_NATIVE_DOUBLE,
+                                dataspace_id, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     if (dset_y_id < 0) {
-        printf("Error creating dataset y\n");
+        printf("Error creating dataset /y\n");
         H5Sclose(dataspace_id);
         H5Fclose(file_id);
         free(x);
         free(y);
         return 1;
     }
-
-    // Scrive il vettore y nel dataset "y"
-    if (H5Dwrite(dset_y_id, H5T_NATIVE_DOUBLE,
-                 H5S_ALL, H5S_ALL, H5P_DEFAULT, y) < 0) {
-        printf("Error writing dataset y\n");
+    if (H5Dwrite(dset_y_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, y) < 0) {
+        printf("Error writing dataset /y\n");
         H5Dclose(dset_y_id);
         H5Sclose(dataspace_id);
         H5Fclose(file_id);
@@ -396,20 +545,41 @@ int main(int argc, char *argv[]) {
         free(y);
         return 1;
     }
-
     H5Dclose(dset_y_id);
+
     H5Sclose(dataspace_id);
     H5Fclose(file_id);
 
     free(x);
     free(y);
 
-    printf("HDF5 file generated: %s (datasets: /x, /y, size N = %d)\n",
-           filename, N);
+    printf("HDF5 file generated: %s (datasets: /x, /y, size N = %d)\n", filename, N);
     return 0;
 }
 
 ```
+
+**On terminal, now choose the N value (e.g. N=50), a file .hdf5 is created as follow:**
+
+```
+
+./generate_vectors_hdf5 
+Enter N (vector size): 50
+HDF5 file generated: vectors_N50.h5 (datasets: /x, /y, size N = 50)
+
+```
+
+**Before perform d=ax+y, we need a config file. We can write it as follow:**
+
+```
+file_h5=vectors_N50.h5
+dataset_x=/x
+dataset_y=/y
+N=50
+a=3.0
+prefix_output=vector_
+```
+
 ### 4.2 read info from HDF5 file and perform d=ax+y
 
 ```c
@@ -602,36 +772,21 @@ int main(void) {
 
 
 ```
-### 4.3 To run the code we need a config file (.txt)
 
-We can write it like this: 
-
-```file_h5=vectors_N10.h5
-dataset_x=/x
-dataset_y=/y
-N=10
-a=3.0
-prefix_output=vector_
-```
-
-Than we can generate our hdf5 file, from terminal:
-```
-./generate_vectors_hdf5 10 vectors_N10.h5
-```
-Now, to calculate d=ax+y:
+**Now, to calculate d=ax+y:**
 
 ```
 ./compute_ax_plus_y_hdf5
 
 ```
 
-and to see the result:
+**and to see the result:**
 ```
-h5dump -d /d vector_N10_d_hdf5.h5
+h5dump -d /d vector_N50_d_hdf5.h5
 
 ```
 
-## 5 Code for gsl_vector_axpby:
+## 5 Code for gsl_vector_axpby (you need the configfile.txt of the point1):
 
 ```c
 #include <stdio.h>
@@ -766,4 +921,19 @@ int main(void) {
     printf("Operazione completata (GSL). Risultato salvato in %s\n", filename_d);
     return 0;
 }
+```
+**with the config.txt of the point 1, now on terminal**
+
+```c
+./compute_ax_plus_y_gsl
+```
+
+**The output**
+```
+File x: vectorN10_x.dat
+File y: vectorN10_y.dat
+N: 10
+a: 0.00
+Output prefix: 
+Operazione completata (GSL). Risultato salvato in N10_d_gsl.dat
 ```
