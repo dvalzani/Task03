@@ -569,9 +569,9 @@ HDF5 file generated: vectors_N50.h5 (datasets: /x, /y, size N = 50)
 
 ```
 
-**Before perform d=ax+y, we need a config file. We can write it as follow:**
+**Before perform d=ax+y, we need a config file. We can write it as follow and name it config_hdf5.txt:**
 
-```
+```config_hdf5.txt
 file_h5=vectors_N50.h5
 dataset_x=/x
 dataset_y=/y
