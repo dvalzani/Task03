@@ -409,30 +409,42 @@ Before modify our code to use and read hdf5 files, we have to update the Makefil
 CC       = gcc
 CFLAGS   = -Wall -Wextra -O2
 GSL_LIBS = -lgsl -lgslcblas -lm
-HDF5_LIBS = -lhdf5
 
+# ------------------------------------------------------------
+# HDF5: no pkg-config available in this environment.
+# Use detected include path + prefer libhdf5_openmpi if present.
+# ------------------------------------------------------------
+HDF5_INC  = -I/usr/include/openmpi-x86_64
+HDF5_LIBS = $(shell ldconfig -p 2>/dev/null | grep -q libhdf5_openmpi && echo -lhdf5_openmpi || echo -lhdf5)
+
+
+# ------------------------------------------------------------
+# Targets
+# ------------------------------------------------------------
 all: generate_vectors compute_ax_plus_y compute_ax_plus_y_gsl \
      generate_vectors_hdf5 compute_ax_plus_y_hdf5
 
 generate_vectors: generate_vectors.c
-	$(CC) $(CFLAGS) generate_vectors.c -o generate_vectors
+	$(CC) $(CFLAGS) $< -o $@
 
 compute_ax_plus_y: compute_ax_plus_y.c
-	$(CC) $(CFLAGS) compute_ax_plus_y.c -o compute_ax_plus_y
+	$(CC) $(CFLAGS) $< -o $@
 
 compute_ax_plus_y_gsl: compute_ax_plus_y_gsl.c
-	$(CC) $(CFLAGS) compute_ax_plus_y_gsl.c -o compute_ax_plus_y_gsl $(GSL_LIBS)
+	$(CC) $(CFLAGS) $< -o $@ $(GSL_LIBS)
 
 generate_vectors_hdf5: generate_vectors_hdf5.c
-	$(CC) $(CFLAGS) generate_vectors_hdf5.c -o generate_vectors_hdf5 $(HDF5_LIBS)
+	$(CC) $(CFLAGS) $(HDF5_INC) $< -o $@ $(HDF5_LIBS)
 
 compute_ax_plus_y_hdf5: compute_ax_plus_y_hdf5.c
-	$(CC) $(CFLAGS) compute_ax_plus_y_hdf5.c -o compute_ax_plus_y_hdf5 $(HDF5_LIBS)
+	$(CC) $(CFLAGS) $(HDF5_INC) $< -o $@ $(HDF5_LIBS)
+
 
 clean:
 	rm -f generate_vectors compute_ax_plus_y compute_ax_plus_y_gsl \
 	      generate_vectors_hdf5 compute_ax_plus_y_hdf5 \
 	      *.o vector_*.dat *.h5
+
 ```
 
 ### 4.1 generate vectors in hdf5 file format
